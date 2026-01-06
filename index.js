@@ -129,7 +129,7 @@ client.on('messageCreate', async (message) => {
         `\`${PREFIX}score\` : tchof ch7al 3andek dyal points f total.`,
         `\`${PREFIX}top\` : tchof classement dyal l-famille f points.`,
         '',
-        '**Bonus night points:** ila kont gales f voice bin 21h w 2 dyal sbah, kol d9i9a kat3ti **1 point** f score.`
+        '**Bonus night points:** ila kont gales f voice bin 21h w 2 dyal sbah, kol d9i9a kat3ti **1 point** f score.'
       ].join('\n')
     );
   }
