@@ -8,7 +8,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates
   ],
   partials: [Partials.Channel]
 });
@@ -24,6 +25,12 @@ const TASK_POINTS = {
   black_usb: 10,
   cloth: 15
 };
+
+// Voice activity tracking: { guildId: Set<userId> } for users currently in voice
+const voiceInChannel = {};
+
+// How many points per minute spent in voice during the night window
+const VOICE_POINT_PER_MINUTE = 1;
 
 // Helper to get today's key (per server local date, but using UTC here for simplicity)
 function getTodayKey() {
@@ -46,11 +53,61 @@ function getGuildScoresStore(guildId) {
   return scoresStore[guildId];
 }
 
+function getGuildVoiceSet(guildId) {
+  if (!voiceInChannel[guildId]) voiceInChannel[guildId] = new Set();
+  return voiceInChannel[guildId];
+}
+
+// Night window: from 21:00 to 02:00 (server time)
+function isWithinNightWindow(date) {
+  const hour = date.getHours();
+  // 21,22,23,0,1
+  return hour >= 21 || hour < 2;
+}
+
 const PREFIX = '!';
 
 client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
+
+// Track when users join/leave voice
+client.on('voiceStateUpdate', (oldState, newState) => {
+  const guildId = newState.guild.id;
+  const set = getGuildVoiceSet(guildId);
+  const userId = newState.id;
+
+  const wasInVoice = !!oldState.channelId;
+  const isInVoice = !!newState.channelId;
+
+  if (!wasInVoice && isInVoice) {
+    // joined voice
+    set.add(userId);
+  } else if (wasInVoice && !isInVoice) {
+    // left voice
+    set.delete(userId);
+  } else if (wasInVoice && isInVoice && oldState.channelId !== newState.channelId) {
+    // moved between channels – still considered "in voice"
+    set.add(userId);
+  }
+});
+
+// Every minute, give points to users sitting in voice during the night window
+setInterval(() => {
+  const now = new Date();
+  if (!isWithinNightWindow(now)) return;
+
+  for (const guild of client.guilds.cache.values()) {
+    const guildId = guild.id;
+    const set = getGuildVoiceSet(guildId);
+    if (!set || set.size === 0) continue;
+
+    const scores = getGuildScoresStore(guildId);
+    for (const userId of set) {
+      scores[userId] = (scores[userId] || 0) + VOICE_POINT_PER_MINUTE;
+    }
+  }
+}, 60 * 1000);
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
@@ -64,13 +121,15 @@ client.on('messageCreate', async (message) => {
   if (command === 'help') {
     await message.reply(
       [
-        '**Bot d\'assignation de tâches (famille)**',
-        `\`${PREFIX}addtask <type> [description]\` : ajout de ta tâche du jour. Types spéciaux: **black_usb (10 points)**, **cloth (15 points)**.`,
-        `\`${PREFIX}done\` : marquer ta tâche du jour comme faite.`,
-        `\`${PREFIX}mytask\` : voir ta tâche du jour.`,
-        `\`${PREFIX}report\` : (admin) voir qui a fait / pas fait sa tâche aujourd'hui.`,
-        `\`${PREFIX}score\` : voir ton score total.`,
-        `\`${PREFIX}top\` : classement des scores.`
+        '**Bot dyal tâches w points dyal l-famille**',
+        `\`${PREFIX}addtask <type> [description]\` : tsajjel tâche dyalek dyal lyom. Types m3ana daba: **black_usb (10 points)**, **cloth (15 points)**.`,
+        `\`${PREFIX}done\` : t3ellem bli skhit tâche dyalek.`,
+        `\`${PREFIX}mytask\` : tchof chno hiya tâche dyalek dyal lyom.`,
+        `\`${PREFIX}report\` : tchof chkoun dar tâche w chkoun la f had nhar.`,
+        `\`${PREFIX}score\` : tchof ch7al 3andek dyal points f total.`,
+        `\`${PREFIX}top\` : tchof classement dyal l-famille f points.`,
+        '',
+        '**Bonus night points:** ila kont gales f voice bin 21h w 2 dyal sbah, kol d9i9a kat3ti **1 point** f score.`
       ].join('\n')
     );
   }
@@ -82,8 +141,8 @@ client.on('messageCreate', async (message) => {
 
     if (!baseTaskKey) {
       await message.reply(
-        `Merci d'écrire le type de tâche, par ex: \`${PREFIX}addtask black_usb\` ou \`${PREFIX}addtask cloth\`.\n` +
-          `Tu peux aussi ajouter une description: \`${PREFIX}addtask cloth plier les vêtements\`.`
+        `Ktib type dyal tâche, b7al: \`${PREFIX}addtask black_usb\` ola \`${PREFIX}addtask cloth\`.\n` +
+          `T9der tzed description zyada: \`${PREFIX}addtask cloth n7yed l7wayej mn machine\`.`
       );
       return;
     }
@@ -93,8 +152,8 @@ client.on('messageCreate', async (message) => {
 
     if (!known) {
       await message.reply(
-        `Type de tâche inconnu: **${baseTaskKey}**.\n` +
-          `Types connus: **black_usb** (${TASK_POINTS.black_usb} points), **cloth** (${TASK_POINTS.cloth} points).`
+        `Ma 3reftch had type dyal tâche: **${baseTaskKey}**.\n` +
+          `Types li 3ndna daba: **black_usb** (${TASK_POINTS.black_usb} points), **cloth** (${TASK_POINTS.cloth} points).`
       );
       return;
     }
@@ -114,7 +173,7 @@ client.on('messageCreate', async (message) => {
     };
 
     await message.reply(
-      `✅ Ta tâche d'aujourd'hui est enregistrée: **${taskText}** (${TASK_POINTS[normalizedKey]} points quand tu feras \`${PREFIX}done\`).`
+      `✅ Tâche dyalk dyal lyom tsajlat: **${taskText}**. Ila drti \`${PREFIX}done\` ghadi tzid lik **${TASK_POINTS[normalizedKey]} points**.`
     );
   }
 
@@ -124,14 +183,14 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
 
     if (!store[userId]) {
-      await message.reply(`Tu n'as pas encore de tâche pour aujourd'hui. Utilise \`${PREFIX}addtask\` pour en ajouter une.`);
+      await message.reply(`Mazal ma 3endekch tâche dyal lyom. Est3mel \`${PREFIX}addtask\` bach tsajjel wa7da.`);
       return;
     }
 
     const entry = store[userId];
 
     if (entry.done) {
-      await message.reply('Ta tâche du jour est déjà marquée comme faite 👍');
+      await message.reply('Tâche dyalk dyal lyom rah deja ma3loma blli skhit-ha 👍');
       return;
     }
 
@@ -147,7 +206,7 @@ client.on('messageCreate', async (message) => {
       gainMsg = ` Tu gagnes **${points} points** pour la tâche **${entry.baseTaskKey}**.`;
     }
 
-    await message.reply(`🎉 Bravo ! Ta tâche du jour est marquée comme **faite**.${gainMsg}`);
+    await message.reply(`🎉 3afak 3lik ! Tâche dyalk dyal lyom wlat **skhiya**.${gainMsg}`);
   }
 
   // Show user's task
@@ -156,12 +215,13 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
 
     if (!store[userId]) {
-      await message.reply(`Tu n'as pas encore de tâche pour aujourd'hui. Utilise \`${PREFIX}addtask\` pour en ajouter une.`);
+      await message.reply(`Mazal ma 3endekch tâche dyal lyom. Est3mel \`${PREFIX}addtask\` bach tsajjel wa7da.`);
       return;
     }
 
     const status = store[userId].done ? '✅ faite' : '⏳ pas encore faite';
-    await message.reply(`Ta tâche d'aujourd'hui: **${store[userId].task}** (${status})`);
+    const statusText = store[userId].done ? '✅ skhiya' : '⏳ mazal ma skhitich';
+    await message.reply(`Tâche dyalk dyal lyom hiya: **${store[userId].task}** (${statusText})`);
   }
 
   // Daily report command (anyone can use; you can restrict by role if you want)
@@ -170,7 +230,7 @@ client.on('messageCreate', async (message) => {
     const memberIds = Object.keys(store);
 
     if (memberIds.length === 0) {
-      await message.reply('Aucune tâche enregistrée pour aujourd\'hui.');
+      await message.reply('Ma tsajlat hata tâche f had nhar.');
       return;
     }
 
@@ -191,12 +251,12 @@ client.on('messageCreate', async (message) => {
     }
 
     const today = getTodayKey();
-    let report = `📝 **Rapport des tâches pour ${today}**\n\n`;
+    let report = `📝 **Rapport dyal tâches dyal ${today}**\n\n`;
 
-    report += '**✅ Ont fait leur tâche:**\n';
-    report += doneLines.length ? doneLines.join('\n') : '- Personne 😅';
-    report += '\n\n**❌ N\'ont pas fait leur tâche:**\n';
-    report += notDoneLines.length ? notDoneLines.join('\n') : '- Personne, tout le monde a bien travaillé ! 🎉';
+    report += '**✅ Li skhaw tâche dyalhom:**\n';
+    report += doneLines.length ? doneLines.join('\n') : '- 7ta wa7ed 😅';
+    report += '\n\n**❌ Li mazal ma skhaw tâche:**\n';
+    report += notDoneLines.length ? notDoneLines.join('\n') : '- 7ta wa7ed, kola chi khdam مزيان ! 🎉';
 
     await message.reply(report);
   }
@@ -206,7 +266,7 @@ client.on('messageCreate', async (message) => {
     const scores = getGuildScoresStore(message.guild.id);
     const userId = message.author.id;
     const total = scores[userId] || 0;
-    await message.reply(`Ton score total est de **${total} points**.`);
+    await message.reply(`Score total dyalk daba howa **${total} points**.`);
   }
 
   // Show top scores
@@ -215,7 +275,7 @@ client.on('messageCreate', async (message) => {
     const entries = Object.entries(scores);
 
     if (entries.length === 0) {
-      await message.reply('Personne n\'a encore de points.');
+      await message.reply('Mazal ma kayn 7ta wa7ed 3ando points.');
       return;
     }
 
@@ -232,7 +292,7 @@ client.on('messageCreate', async (message) => {
       lines.push(`${i + 1}. ${displayName}: **${pts} points**`);
     }
 
-    await message.reply(`🏆 **Top scores de la famille**:\n${lines.join('\n')}`);
+    await message.reply(`🏆 **Top scores dyal l-famille**:\n${lines.join('\n')}`);
   }
 });
 
