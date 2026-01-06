@@ -1,0 +1,22 @@
+{
+  "name": "familles-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for assigning daily tasks and reporting who completed them.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "tasks",
+    "daily"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  }
+}
+
